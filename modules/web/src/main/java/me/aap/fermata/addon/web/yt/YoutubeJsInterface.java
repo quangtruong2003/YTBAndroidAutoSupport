@@ -2,6 +2,7 @@ package me.aap.fermata.addon.web.yt;
 
 import me.aap.fermata.addon.web.FermataJsInterface;
 import me.aap.fermata.addon.web.FermataWebView;
+import me.aap.fermata.media.service.SuggestedMediaRegistry;
 import me.aap.utils.async.Completable;
 import me.aap.utils.async.Promise;
 import me.aap.utils.log.Log;
@@ -15,6 +16,7 @@ public class YoutubeJsInterface extends FermataJsInterface {
 	public static final int JS_VIDEO_PAUSED = JS_LAST + 3;
 	public static final int JS_VIDEO_ENDED = JS_LAST + 4;
 	public static final int JS_VIDEO_QUALITIES = JS_LAST + 5;
+	public static final int JS_RECOMMENDATIONS = JS_LAST + 6;
 	private final YoutubeMediaEngine engine;
 	private Promise<String> result;
 
@@ -48,6 +50,9 @@ public class YoutubeJsInterface extends FermataJsInterface {
 			case JS_VIDEO_QUALITIES:
 				Log.d("Video qualities: ", data);
 				setResult(data);
+				break;
+			case JS_RECOMMENDATIONS:
+				SuggestedMediaRegistry.updateYoutube(data);
 				break;
 			default:
 				super.handleEvent(event, data);

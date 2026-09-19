@@ -17,6 +17,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -115,12 +116,31 @@ public class FermataMediaService extends MediaBrowserServiceCompat {
 		return lib;
 	}
 
+	/**
+	 * The custom Web+ Android Auto build exposes media through FermataMediaBridge.
+	 * Keeping this session internal prevents Gearhead from also creating a
+	 * playback-only app with an empty component name.
+	 */
+	boolean usesExternalMediaBridge() {
+		// Use the runtime package name instead of BuildConfig.APPLICATION_ID here.
+		// Dynamic-feature/flavor builds can expose the base application id in
+		// BuildConfig, while the actually installed package carries .webplus.
+		return BuildConfig.AUTO && getPackageName().contains(".webplus");
+	}
+
 	@Override
 	public void onCreate() {
 		super.onCreate();
 		Context ctx = this;
 		lib = new DefaultMediaLib(FermataApplication.get());
 		session = new MediaSessionCompat(this, "FermataMediaService");
+		// Give Android Auto a concrete activity component for this media session.
+		// Without this, Gearhead can see playback but may resolve ComponentInfo{pkg/}
+		// and fall back to a generic/empty media icon in the taskbar.
+		Intent sessionIntent = new Intent().setComponent(new ComponentName(getPackageName(),
+				"me.aap.fermata.ui.activity.MainActivity"));
+		session.setSessionActivity(PendingIntent.getActivity(this, 2, sessionIntent,
+				FLAG_IMMUTABLE | FLAG_UPDATE_CURRENT));
 		setSessionToken(session.getSessionToken());
 		callback = new MediaSessionCallback(this, session, lib,
 				PlaybackControlPrefs.create(FermataApplication.get().getDefaultSharedPreferences()),
@@ -134,6 +154,18 @@ public class FermataMediaService extends MediaBrowserServiceCompat {
 				PendingIntent.getBroadcast(ctx, 0, mediaButtonIntent, FLAG_IMMUTABLE));
 		notifColor = Color.parseColor(DEFAULT_NOTIF_COLOR);
 		App.get().getScheduler().schedule(lib::cleanUpPrefs, 1, TimeUnit.HOURS);
+		SuggestedMediaRegistry.setChangeListener(() -> {
+			var queue = SuggestedMediaRegistry.getQueueItems();
+			if (!queue.isEmpty()) {
+				session.setQueue(queue);
+				session.setQueueTitle("Dành cho bạn");
+			}
+			notifyChildrenChanged(SuggestedMediaRegistry.ROOT_ID);
+			// Android Auto falls back to the top of the normal browse tree when it
+			// does not ask for EXTRA_SUGGESTED explicitly. Refresh that root too.
+			notifyChildrenChanged(getLib().getRootId());
+		});
+		SuggestedMediaRegistry.restoreYoutube();
 		Log.d("FermataMediaService created");
 		for (FermataAddon a : AddonManager.get().getAddons()) {
 			if (a instanceof FermataMediaServiceAddon)
@@ -143,6 +175,7 @@ public class FermataMediaService extends MediaBrowserServiceCompat {
 
 	@Override
 	public void onDestroy() {
+		SuggestedMediaRegistry.setChangeListener(null);
 		for (FermataAddon a : AddonManager.get().getAddons()) {
 			if (a instanceof FermataMediaServiceAddon)
 				((FermataMediaServiceAddon) a).onServiceDestroy(callback);
@@ -187,11 +220,32 @@ public class FermataMediaService extends MediaBrowserServiceCompat {
 	@Override
 	public BrowserRoot onGetRoot(@NonNull String clientPackageName, int clientUid,
 															 Bundle rootHints) {
+		if (usesExternalMediaBridge() &&
+				"com.google.android.projection.gearhead".equals(clientPackageName)) {
+			// Web+ exposes exactly one media identity to Android Auto: the dedicated
+			// FermataMediaBridge. Rejecting this duplicate browser endpoint prevents
+			// Gearhead from caching a second generic/empty Fermata media icon.
+			Log.i("Media browser root: Gearhead redirected to FermataMediaBridge");
+			return null;
+		}
 		Bundle extras = new Bundle();
 		extras.putBoolean(EXTRA_MEDIA_SEARCH_SUPPORTED, true);
 		extras.putBoolean(CONTENT_STYLE_SUPPORTED, true);
 		extras.putInt(CONTENT_STYLE_BROWSABLE_HINT, CONTENT_STYLE_LIST_ITEM_HINT_VALUE);
 		extras.putInt(CONTENT_STYLE_PLAYABLE_HINT, CONTENT_STYLE_LIST_ITEM_HINT_VALUE);
+
+		boolean suggested = (rootHints != null) &&
+				rootHints.getBoolean(SuggestedMediaRegistry.EXTRA_SUGGESTED, false);
+		boolean recent = (rootHints != null) &&
+				rootHints.getBoolean(SuggestedMediaRegistry.EXTRA_RECENT, false);
+		Log.i("Media browser root request: client=" + clientPackageName +
+				", hints=" + rootHints + ", suggested=" + suggested + ", recent=" + recent +
+				", suggestions=" + SuggestedMediaRegistry.getItems().size());
+		if (suggested || recent) {
+			if (suggested) extras.putBoolean(SuggestedMediaRegistry.EXTRA_SUGGESTED, true);
+			if (recent) extras.putBoolean(SuggestedMediaRegistry.EXTRA_RECENT, true);
+			return new BrowserRoot(SuggestedMediaRegistry.ROOT_ID, extras);
+		}
 		return new BrowserRoot(getLib().getRootId(), extras);
 	}
 
@@ -203,11 +257,42 @@ public class FermataMediaService extends MediaBrowserServiceCompat {
 	@Override
 	public void onLoadChildren(@NonNull String parentMediaId,
 														 @NonNull Result<List<MediaItem>> result) {
+		if (sendSuggestedChildren(parentMediaId, null, result)) return;
 		getLib().getChildren(parentMediaId, result);
 	}
 
 	@Override
+	public void onLoadChildren(@NonNull String parentMediaId,
+														 @NonNull Result<List<MediaItem>> result, @NonNull Bundle options) {
+		if (sendSuggestedChildren(parentMediaId, options, result)) return;
+		super.onLoadChildren(parentMediaId, result, options);
+	}
+
+	private boolean sendSuggestedChildren(String parentMediaId, Bundle options,
+														 Result<List<MediaItem>> result) {
+		boolean explicit = SuggestedMediaRegistry.ROOT_ID.equals(parentMediaId) ||
+				((options != null) &&
+						(options.getBoolean(SuggestedMediaRegistry.EXTRA_SUGGESTED, false) ||
+								options.getBoolean(SuggestedMediaRegistry.EXTRA_RECENT, false)));
+		boolean webPlusRootFallback = BuildConfig.APPLICATION_ID.contains(".webplus") &&
+				getLib().getRootId().equals(parentMediaId) && SuggestedMediaRegistry.hasItems();
+		if (!explicit && !webPlusRootFallback) return false;
+
+		List<MediaItem> suggested = SuggestedMediaRegistry.getItems();
+		Log.i("Sending Android Auto YouTube suggestions: " + suggested.size() +
+				", parent=" + parentMediaId + ", options=" + options);
+		result.sendResult(suggested);
+		return true;
+	}
+
+	@Override
 	public void onLoadItem(String itemId, @NonNull Result<MediaItem> result) {
+		MediaItem suggested = SuggestedMediaRegistry.getItem(itemId);
+		if (suggested != null) {
+			Log.i("Sending Android Auto suggested item: " + itemId);
+			result.sendResult(suggested);
+			return;
+		}
 		getLib().getItem(itemId, result);
 	}
 
@@ -224,6 +309,11 @@ public class FermataMediaService extends MediaBrowserServiceCompat {
 
 	@SuppressLint("SwitchIntDef")
 	void updateNotification(int st, PlayableItem currentItem) {
+		// Service construction emits STATE_NONE before any WebView media exists.
+		// Preserve the bridge's cached now-playing card until we have real metadata
+		// or a real playback transition to publish.
+		if ((st != STATE_NONE) || (session.getController().getMetadata() != null))
+			broadcastPlaybackToBridge(st);
 		switch (st) {
 			case STATE_NONE, STATE_STOPPED, STATE_ERROR -> stopForeground(true);
 			case STATE_PAUSED -> {
@@ -236,6 +326,29 @@ public class FermataMediaService extends MediaBrowserServiceCompat {
 			case STATE_PLAYING -> startForeground(NOTIF_ID, createNotification(st, currentItem));
 			default -> {
 			}
+		}
+	}
+
+	private void broadcastPlaybackToBridge(int st) {
+		try {
+			MediaControllerCompat controller = session.getController();
+			MediaMetadataCompat md = controller.getMetadata();
+			MediaDescriptionCompat d = (md == null) ? null : md.getDescription();
+			PlaybackStateCompat ps = controller.getPlaybackState();
+			Intent i = new Intent("me.aap.fermata.mediabridge.action.UPDATE_PLAYBACK")
+					.setComponent(new ComponentName("me.aap.fermata.mediabridge",
+							"me.aap.fermata.mediabridge.SuggestionReceiver"))
+					.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
+					.putExtra("state", st)
+					.putExtra("position", (ps == null) ? 0L : ps.getPosition());
+			if (d != null) {
+				if (d.getTitle() != null) i.putExtra("title", d.getTitle().toString());
+				if (d.getSubtitle() != null) i.putExtra("subtitle", d.getSubtitle().toString());
+				if (d.getIconUri() != null) i.putExtra("art", d.getIconUri().toString());
+			}
+			sendBroadcast(i);
+		} catch (Exception ex) {
+			Log.d(ex, "Failed to mirror playback to Fermata Media bridge");
 		}
 	}
 

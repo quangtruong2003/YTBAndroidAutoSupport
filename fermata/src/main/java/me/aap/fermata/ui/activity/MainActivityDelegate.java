@@ -166,6 +166,7 @@ public class MainActivityDelegate extends ActivityDelegate
 	private ContentLoadingProgressBar progressBar;
 	private FutureSupplier<?> contentLoading;
 	private boolean barsHidden;
+	private boolean webUiOnly;
 	private boolean videoMode;
 	private int brightness = 255;
 	private SpeechListener speechListener;
@@ -590,6 +591,29 @@ public class MainActivityDelegate extends ActivityDelegate
 			ToolBarView tb = getToolBar();
 			if (tb.getMediator() != ToolBarView.Mediator.Invisible.instance) tb.setVisibility(visibility);
 			getNavBar().setVisibility(visibility);
+		});
+	}
+
+	public boolean isWebUiOnly() {
+		return webUiOnly;
+	}
+
+	/**
+	 * Hides Fermata's own chrome while a web app (currently YouTube) supplies
+	 * the complete playback UI itself.
+	 */
+	public void setWebUiOnly(boolean webUiOnly) {
+		App.get().getHandler().post(() -> {
+			if (this.webUiOnly == webUiOnly) return;
+			this.webUiOnly = webUiOnly;
+			getControlPanel().setChromeSuppressed(webUiOnly);
+			if (webUiOnly) {
+				setBarsHidden(true);
+				getFloatingButton().setVisibility(GONE);
+			} else {
+				setBarsHidden(false);
+				getFloatingButton().setVisibility(VISIBLE);
+			}
 		});
 	}
 

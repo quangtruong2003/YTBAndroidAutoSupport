@@ -7,12 +7,15 @@ import static me.aap.fermata.addon.web.yt.YoutubeJsInterface.JS_VIDEO_FOUND;
 import static me.aap.fermata.addon.web.yt.YoutubeJsInterface.JS_VIDEO_PAUSED;
 import static me.aap.fermata.addon.web.yt.YoutubeJsInterface.JS_VIDEO_PLAYING;
 import static me.aap.fermata.addon.web.yt.YoutubeJsInterface.JS_VIDEO_QUALITIES;
+import static me.aap.fermata.addon.web.yt.YoutubeJsInterface.JS_RECOMMENDATIONS;
 
 import android.content.Context;
 import android.util.AttributeSet;
 import android.webkit.CookieManager;
 
 import androidx.annotation.NonNull;
+
+import org.json.JSONArray;
 
 import java.util.List;
 
@@ -95,6 +98,7 @@ public class YoutubeWebView extends FermataWebView {
 		attachListeners();
 		injectSponsorBlock();
 		addFocusHighlight();
+		refreshRecommendations();
 		CookieManager.getInstance().flush();
 	}
 
@@ -107,6 +111,47 @@ public class YoutubeWebView extends FermataWebView {
 				"e = new KeyboardEvent('keyup',\n" +
 				"{ code: 'Enter', key: 'Enter', keyCode: 13, view: window, bubbles: true });\n" +
 				"document.activeElement.dispatchEvent(e);");
+	}
+
+	void refreshRecommendations() {
+		// YouTube renders the recommendation rail lazily. A few fixed delays were
+		// not enough on Android Auto, so install a debounced MutationObserver and
+		// keep a couple of fallback scans for slow pages.
+		postDelayed(this::installRecommendationPublisher, 500L);
+		postDelayed(this::publishRecommendations, 2500L);
+		postDelayed(this::publishRecommendations, 7000L);
+		postDelayed(this::publishRecommendations, 14000L);
+	}
+
+	private void installRecommendationPublisher() {
+		String scan =
+				"var out=[],seen={},cur=(new URL(location.href)).searchParams.get('v');" +
+				"var hs=document.querySelectorAll('yt-lockup-view-model,ytm-media-item,ytm-video-with-context-renderer,ytm-compact-video-renderer');" +
+				"for(var n=0;n<hs.length&&out.length<20;n++){" +
+				"var h=hs[n],a=h.querySelector('.ytLockupMetadataViewModelTitle a[href*=\\\"watch?v=\\\"],.media-item-metadata a[href*=\\\"watch?v=\\\"],a[href*=\\\"watch?v=\\\"]');if(!a)continue;" +
+				"var u=new URL(a.href,location.href),id=u.searchParams.get('v');" +
+				"if(!id||id===cur||seen[id])continue;seen[id]=true;" +
+				"var hn=h.querySelector('.ytLockupMetadataViewModelTitle,.media-item-headline .ytAttributedStringHost,.media-item-headline,h3,h4,.compact-media-item-headline');" +
+				"var title=((hn&&(hn.innerText||hn.getAttribute('aria-label')))||a.getAttribute('aria-label')||'YouTube').trim().replace(/\\s+/g,' ').slice(0,180);" +
+				"var img=h.querySelector('.ytLockupViewModelContentImage img,.media-item-thumbnail-container img,img'),thumb=(img&&(img.currentSrc||img.src))||('https://i.ytimg.com/vi/'+id+'/hqdefault.jpg');" +
+				"out.push({videoId:id,title:title,thumb:thumb});}";
+		String script = "(function(){try{" +
+				"window.__fermataPublishRecommendations=function(){try{" + scan +
+				"if(!out.length)return 0;var json=JSON.stringify(out);" +
+				"if(json!==window.__fermataLastRecommendations){window.__fermataLastRecommendations=json;" +
+				JS_EVENT + "(" + JS_RECOMMENDATIONS + ",json);}return out.length;" +
+				"}catch(e){" + JS_EVENT + "(" + JS_ERR + ",'Recommendations scan: '+e);return 0;}};" +
+				"if(window.__fermataRecommendationsObserver)window.__fermataRecommendationsObserver.disconnect();" +
+				"var timer=null;window.__fermataRecommendationsObserver=new MutationObserver(function(){" +
+				"if(timer)clearTimeout(timer);timer=setTimeout(function(){window.__fermataPublishRecommendations();},700);});" +
+				"window.__fermataRecommendationsObserver.observe(document.documentElement,{childList:true,subtree:true});" +
+				"window.__fermataPublishRecommendations();" +
+				"}catch(e){" + JS_EVENT + "(" + JS_ERR + ",'Recommendations observer: '+e);}})();";
+		evaluateJavascript(script, null);
+	}
+
+	private void publishRecommendations() {
+		evaluateJavascript("window.__fermataPublishRecommendations ? window.__fermataPublishRecommendations() : 0;", null);
 	}
 
 	private void attachListeners() {
@@ -154,16 +199,60 @@ public class YoutubeWebView extends FermataWebView {
 	}
 
 	void play() {
-		loadUrl("javascript:var v = document.querySelector('video'); if (v != null) v.play();");
+		resume(0L);
+	}
+
+	/**
+	 * Starts a YouTube selection made from Android Auto and explicitly restores
+	 * audible playback. YouTube/Chromium may autoplay a programmatically loaded
+	 * watch page muted, so retry until the real player/video element is ready.
+	 */
+	void playAudible() {
+		loadUrl("javascript:(function(){" +
+				"window.__fermataDesiredPlaying=true;" +
+				"if(window.__fermataAudibleTimer)clearInterval(window.__fermataAudibleTimer);" +
+				"var until=Date.now()+12000,stable=0;" +
+				"function stopRetry(){if(window.__fermataAudibleTimer)clearInterval(window.__fermataAudibleTimer);" +
+				"window.__fermataAudibleTimer=null;}" +
+				"function forceAudible(){" +
+				"if(window.__fermataDesiredPlaying===false){stopRetry();return;}" +
+				"var v=document.querySelector('video');" +
+				"var p=document.querySelector('#movie_player')||document.querySelector('.html5-video-player');" +
+				"try{if(p&&typeof p.unMute==='function')p.unMute();" +
+				"if(p&&typeof p.getVolume==='function'&&p.getVolume()===0&&typeof p.setVolume==='function')p.setVolume(100);}catch(e){}" +
+				"if(!v){stable=0;return;}try{v.defaultMuted=false;if(v.muted)v.muted=false;if(v.volume===0)v.volume=1.0;" +
+				"if(v.paused){stable=0;var r=v.play();if(r&&r.catch)r.catch(function(){});return;}" +
+				"if(!v.muted&&v.volume>0&&v.readyState>=2){if(++stable>=3)stopRetry();}else stable=0;}catch(e){stable=0;}" +
+				"}" +
+				"forceAudible();" +
+				"window.__fermataAudibleTimer=setInterval(function(){forceAudible();" +
+				"if(Date.now()>=until)stopRetry();},200);" +
+				"})();");
+	}
+
+	void resume(long positionMs) {
+		double pos = positionMs / 1000d;
+		loadUrl("javascript:(function(){" +
+				"window.__fermataDesiredPlaying=true;" +
+				"var v=document.querySelector('video'); if(v==null)return;" +
+				(positionMs > 0 ? "if(Math.abs(v.currentTime-" + pos + ")>1.5)v.currentTime=" + pos + ";" : "") +
+				"var p=v.play(); if(p&&p.catch)p.catch(function(){setTimeout(function(){" +
+				"if(window.__fermataDesiredPlaying!==false)v.play();},250);});" +
+				"})();");
 	}
 
 	void pause() {
-		loadUrl("javascript:var v = document.querySelector('video'); if (v != null) v.pause();");
+		loadUrl("javascript:(function(){window.__fermataDesiredPlaying=false;" +
+				"if(window.__fermataAudibleTimer){clearInterval(window.__fermataAudibleTimer);" +
+				"window.__fermataAudibleTimer=null;}var v=document.querySelector('video');" +
+				"if(v!=null&&!v.paused)v.pause();})();");
 	}
 
 	void stop() {
-		loadUrl("javascript:var v = document.querySelector('video');\n" +
-				"if (v != null) { v.currentTime = 0; v.pause(); }");
+		loadUrl("javascript:(function(){window.__fermataDesiredPlaying=false;" +
+				"if(window.__fermataAudibleTimer){clearInterval(window.__fermataAudibleTimer);" +
+				"window.__fermataAudibleTimer=null;}var v=document.querySelector('video');" +
+				"if(v!=null){v.currentTime=0;v.pause();}})();");
 	}
 
 	void prev() {
@@ -178,13 +267,62 @@ public class YoutubeWebView extends FermataWebView {
 		FermataChromeClient chrome = getWebChromeClient();
 		if (chrome == null) return;
 		chrome.exitFullScreen().thenRun(() -> evaluateJavascript("""
-				function prevNextVideo() {
-				  const buttons = document.querySelectorAll('button.player-middle-controls-prev-next-button');
-				  console.log('Prev/Next buttons:', buttons);
-				  if (buttons) buttons[%d].click();
-				}
-				setTimeout(prevNextVideo, 600);
-				""".formatted(next ? 1 : 0), null));
+				(function() {
+				  var next = %s;
+				  var player = document.querySelector('#movie_player') || document.querySelector('.html5-video-player');
+				  var before = location.href;
+				  var selectors = next ?
+				    ['.ytp-next-button','button.player-controls-middle-next-button','button.player-middle-controls-prev-next-button:last-of-type'] :
+				    ['.ytp-prev-button','button.player-controls-middle-prev-button','button.player-middle-controls-prev-next-button:first-of-type'];
+				  function clickFallback() {
+				    for (var i = 0; i < selectors.length; i++) {
+				      var b = document.querySelector(selectors[i]);
+				      if (b) { b.click(); return true; }
+				    }
+				    return false;
+				  }
+				  var acted = false;
+				  try {
+				    if (player) {
+				      if (next && typeof player.nextVideo === 'function') { player.nextVideo(); acted = true; }
+				      else if (!next && typeof player.previousVideo === 'function') { player.previousVideo(); acted = true; }
+				    }
+				  } catch (e) {}
+				  if (!acted) acted = clickFallback();
+				  if (!acted) return false;
+				  // On standalone watch pages YouTube exposes nextVideo() even when that call
+				  // is a no-op. If the URL did not move, click the visible next/previous control.
+				  setTimeout(function(){ if (location.href === before) clickFallback(); }, 650);
+				  // YouTube can apply a second autoplay/mute transition several seconds after
+				  nextVideo()/previousVideo(). Keep the newly selected video aligned with the
+				  user's latest transport command throughout that transition.
+				  if (window.__fermataSkipTimer) clearInterval(window.__fermataSkipTimer);
+				  var until = Date.now() + 6500;
+				  function settleSkip() {
+				    var v = document.querySelector('video');
+				    var p = document.querySelector('#movie_player') || document.querySelector('.html5-video-player');
+				    if (v) {
+				      if (window.__fermataDesiredPlaying === false) {
+				        try { if (!v.paused) v.pause(); } catch(e) {}
+				      } else {
+				        try {
+				          if (p && typeof p.unMute === 'function') p.unMute();
+				          if (v.muted) v.muted = false;
+				          if (v.volume === 0) v.volume = 1.0;
+				          if (v.paused) { var r = v.play(); if (r && r.catch) r.catch(function(){}); }
+				        } catch(e) {}
+				      }
+				    }
+				    if (Date.now() >= until) {
+				      clearInterval(window.__fermataSkipTimer);
+				      window.__fermataSkipTimer = null;
+				    }
+				  }
+				  settleSkip();
+				  window.__fermataSkipTimer = setInterval(settleSkip, 150);
+				  return true;
+				})();
+				""".formatted(next ? "true" : "false"), null));
 	}
 
 	FutureSupplier<Long> getDuration() {
@@ -354,8 +492,54 @@ public class YoutubeWebView extends FermataWebView {
 	}
 
 	FutureSupplier<String> getVideoTitle() {
+		return getJsString("(function(){" +
+				"var p=document.querySelector('#movie_player')||document.querySelector('.html5-video-player');" +
+				"try{if(p&&typeof p.getVideoData==='function'){var d=p.getVideoData();if(d&&d.title)return d.title;}}catch(e){}" +
+				"var t=(document.title||'').trim();" +
+				"return t.endsWith(' - YouTube')?t.slice(0,-10):t;" +
+				"})()");
+	}
+
+	FutureSupplier<String> getVideoThumbnail() {
+		return getJsString("(function(){" +
+				"var p=document.querySelector('#movie_player')||document.querySelector('.html5-video-player');" +
+				"try{if(p&&typeof p.getVideoData==='function'){var d=p.getVideoData();if(d&&d.video_id)return 'https://i.ytimg.com/vi/'+d.video_id+'/hqdefault.jpg';}}catch(e){}" +
+				"var m=document.querySelector('meta[property=\\\"og:image\\\"]');" +
+				"if(m&&m.content)return m.content;" +
+				"var id=(new URL(location.href)).searchParams.get('v');" +
+				"return id?('https://i.ytimg.com/vi/'+id+'/hqdefault.jpg'):'';" +
+				"})()");
+	}
+
+	FutureSupplier<String> getVideoAuthor() {
+		return getJsString("(function(){" +
+				"var p=document.querySelector('#movie_player')||document.querySelector('.html5-video-player');" +
+				"try{if(p&&typeof p.getVideoData==='function'){var d=p.getVideoData();if(d&&d.author)return d.author;}}catch(e){}" +
+				"var c=document.querySelector('.slim-video-information-channel-name');" +
+				"if(c){var t=(c.innerText||c.textContent||'').trim();if(t)return t;}" +
+				"var owner=document.querySelector('a.slim-video-owner-icon');" +
+				"if(owner){var label=owner.getAttribute('aria-label')||'';if(label)return label.split(',')[0].trim();}" +
+				"var m=document.querySelector('meta[itemprop=\\\"author\\\"]');" +
+				"if(m&&m.content)return m.content;" +
+				"return '';" +
+				"})()");
+	}
+
+	private FutureSupplier<String> getJsString(String expression) {
 		Promise<String> p = new Promise<>();
-		evaluateJavascript("document.title", p::complete);
+		evaluateJavascript(expression, value -> {
+			try {
+				if ((value == null) || "null".equals(value)) {
+					p.complete("");
+					return;
+				}
+				JSONArray a = new JSONArray("[" + value + "]");
+				p.complete(a.optString(0, ""));
+			} catch (Exception ex) {
+				Log.d(ex, "Failed to decode JavaScript string: ", value);
+				p.complete(value);
+			}
+		});
 		return p;
 	}
 

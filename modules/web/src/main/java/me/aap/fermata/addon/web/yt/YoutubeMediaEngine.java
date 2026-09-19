@@ -3,9 +3,11 @@ package me.aap.fermata.addon.web.yt;
 import static me.aap.fermata.media.pref.MediaPrefs.MEDIA_ENG_YT;
 import static me.aap.fermata.util.Utils.dynCtx;
 import static me.aap.utils.async.Completed.completed;
+import static me.aap.utils.async.Completed.completedNull;
 
 import android.content.Context;
 import android.content.res.Resources;
+import android.graphics.Bitmap;
 import android.media.AudioManager;
 import android.media.MediaMetadata;
 import android.support.v4.media.MediaMetadataCompat;
@@ -17,7 +19,10 @@ import androidx.media.AudioFocusRequestCompat;
 
 import com.google.android.play.core.splitcompat.SplitCompat;
 
+import java.util.ArrayDeque;
+
 import me.aap.fermata.BuildConfig;
+import me.aap.fermata.FermataApplication;
 import me.aap.fermata.addon.web.R;
 import me.aap.fermata.addon.web.yt.YoutubeAddon.VideoScale;
 import me.aap.fermata.media.engine.MediaEngine;
@@ -56,7 +61,10 @@ class YoutubeMediaEngine implements MediaEngine, OverlayMenu.SelectionHandler {
 	private final YoutubeItem end;
 	private YoutubeItem current;
 	private String qualityUrl;
+	private String pageUrl;
+	private final ArrayDeque<String> pageHistory = new ArrayDeque<>();
 	private boolean ignorePause;
+	private volatile long resumePosition;
 
 	public YoutubeMediaEngine(YoutubeWebView web, MainActivityDelegate a) {
 		this.web = web;
@@ -83,7 +91,18 @@ class YoutubeMediaEngine implements MediaEngine, OverlayMenu.SelectionHandler {
 		}
 
 		if (url.startsWith("blob:")) url = url.substring(5);
+		String newPageUrl = web.getUrl();
+		if (isWatchUrl(newPageUrl) && !newPageUrl.equals(pageUrl)) {
+			if (isWatchUrl(pageUrl)) {
+				if (pageHistory.isEmpty() || !pageUrl.equals(pageHistory.peekLast())) {
+					pageHistory.addLast(pageUrl);
+					while (pageHistory.size() > 20) pageHistory.removeFirst();
+				}
+			}
+			pageUrl = newPageUrl;
+		}
 		current = new Current(url);
+		web.refreshRecommendations();
 		if (!web.getAddon().autoHighestQuality()) {
 			qualityUrl = null;
 		} else if (!url.isEmpty() && !url.equals(qualityUrl)) {
@@ -101,6 +120,7 @@ class YoutubeMediaEngine implements MediaEngine, OverlayMenu.SelectionHandler {
 	}
 
 	void paused() {
+		web.getPosition().onSuccess(pos -> resumePosition = pos);
 		ignorePause = true;
 		cb.onPause();
 		ignorePause = false;
@@ -124,7 +144,7 @@ class YoutubeMediaEngine implements MediaEngine, OverlayMenu.SelectionHandler {
 
 	@Override
 	public void start() {
-		web.play();
+		web.resume(resumePosition);
 	}
 
 	@Override
@@ -137,7 +157,33 @@ class YoutubeMediaEngine implements MediaEngine, OverlayMenu.SelectionHandler {
 
 	@Override
 	public void pause() {
-		if (!ignorePause) web.pause();
+		if (!ignorePause) {
+			web.getPosition().onSuccess(pos -> resumePosition = pos);
+			web.pause();
+		}
+	}
+
+	@Override
+	public boolean skipToPrevious() {
+		String previous = pageHistory.pollLast();
+		if (isWatchUrl(previous)) {
+			pageUrl = previous;
+			resumePosition = 0L;
+			web.loadUrl(previous);
+		} else {
+			web.prev();
+		}
+		return true;
+	}
+
+	@Override
+	public boolean skipToNext() {
+		web.next();
+		return true;
+	}
+
+	private static boolean isWatchUrl(String url) {
+		return (url != null) && url.startsWith("https://m.youtube.com/watch");
 	}
 
 	@Override
@@ -274,6 +320,13 @@ class YoutubeMediaEngine implements MediaEngine, OverlayMenu.SelectionHandler {
 	}
 
 	@Override
+	public boolean isVideoModeRequired() {
+		// The YouTube WebView is the video surface. Keeping Fermata's generic
+		// VideoView disabled leaves YouTube's own player/UI on screen.
+		return false;
+	}
+
+	@Override
 	public boolean isSplitModeSupported() {
 		return false;
 	}
@@ -323,12 +376,39 @@ class YoutubeMediaEngine implements MediaEngine, OverlayMenu.SelectionHandler {
 		@Override
 		protected FutureSupplier<MediaMetadataCompat> loadMeta() {
 			FutureSupplier<String> getTitle = web.getVideoTitle();
-			return web.getDuration().then(dur -> getTitle.map(title -> {
-				MediaMetadataCompat.Builder b = new MediaMetadataCompat.Builder();
-				b.putString(MediaMetadataCompat.METADATA_KEY_TITLE, title);
-				b.putLong(MediaMetadata.METADATA_KEY_DURATION, dur);
-				return b.build();
-			}));
+			FutureSupplier<String> getThumb = web.getVideoThumbnail();
+			FutureSupplier<String> getAuthor = web.getVideoAuthor();
+			return web.getDuration().then(dur -> getTitle.then(title -> getThumb.then(thumb ->
+					getAuthor.then(author -> {
+						FutureSupplier<Bitmap> getArtwork = completedNull();
+						if ((thumb != null) && thumb.startsWith("https://")) {
+							FermataApplication app = FermataApplication.get();
+							getArtwork = app.getBitmapCache().getBitmap(app, thumb, true, true).ifFail(ex -> {
+								Log.d(ex, "Failed to load YouTube artwork: ", thumb);
+								return null;
+							});
+						}
+
+						return getArtwork.map(artwork -> {
+							MediaMetadataCompat.Builder b = new MediaMetadataCompat.Builder();
+							String mediaTitle = ((title == null) || title.isBlank()) ? "YouTube" : title;
+							String subtitle = ((author == null) || author.isBlank()) ? "YouTube" : author;
+							b.putString(MediaMetadataCompat.METADATA_KEY_TITLE, mediaTitle);
+							b.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, mediaTitle);
+							b.putString(MediaMetadataCompat.METADATA_KEY_ARTIST, subtitle);
+							b.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, subtitle);
+							if ((thumb != null) && thumb.startsWith("https://")) {
+								b.putString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI, thumb);
+								b.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON_URI, thumb);
+							}
+							if (artwork != null) {
+								b.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, artwork);
+								b.putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, artwork);
+							}
+							b.putLong(MediaMetadata.METADATA_KEY_DURATION, dur);
+							return b.build();
+						});
+					}))));
 		}
 
 		@NonNull

@@ -55,7 +55,7 @@ import me.aap.utils.ui.view.ToolBarView;
 public class FermataWebView extends WebView
 		implements TextChangedListener, TextView.OnEditorActionListener, PreferenceStore.Listener,
 		MainActivityListener {
-	private final boolean isCar;
+	private volatile boolean isCar;
 	private WebBrowserAddon addon;
 	private FermataWebClient webClient;
 	private FermataChromeClient chrome;
@@ -66,12 +66,21 @@ public class FermataWebView extends WebView
 
 	public FermataWebView(Context context, AttributeSet attrs) {
 		super(context, attrs);
-		isCar = BuildConfig.AUTO && MainActivityDelegate.get(context).isCarActivityNotMirror();
+		initCarMode(context);
 	}
 
 	public FermataWebView(Context context, AttributeSet attrs, int defStyleAttr) {
 		super(context, attrs, defStyleAttr);
-		isCar = BuildConfig.AUTO && MainActivityDelegate.get(context).isCarActivityNotMirror();
+		initCarMode(context);
+	}
+
+	private void initCarMode(Context context) {
+		if (!BuildConfig.AUTO) return;
+		// Layout inflation can happen before ActivityDelegate has completed its
+		// asynchronous initialization (notably after a cold start from Android Auto).
+		// Never synchronously peek/get the delegate from a View constructor.
+		MainActivityDelegate.getActivityDelegate(context).onSuccess(a ->
+				isCar = a.isCarActivityNotMirror());
 	}
 
 	@SuppressLint("SetJavaScriptEnabled")

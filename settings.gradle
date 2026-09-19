@@ -29,8 +29,11 @@ include ':fermata'
 include ':utils'
 project(':utils').projectDir = file('depends/utils')
 
+def webOnly = '1'.equals(System.getenv('FERMATA_WEB_ONLY')) ||
+        '1'.equals(gradle.startParameter.projectProperties.get('WEB_ONLY'))
 file('modules').eachDir {
     def name = ':' + it.name
+    if (webOnly && (':web' != name)) return
     if ((':gdrive' == name) && !gradle.ext.enableGoogleServices) return
     gradle.ext.modules.add(name)
     include name

@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <automotiveApp xmlns:tools="http://schemas.android.com/tools">
-    <uses name="media" />
-<!--    <uses name="template" />-->
+    <!-- Media is exposed by the dedicated FermataMediaBridge package. Keep this
+         package classified as the interactive Fermata Web car app so taskbar/app
+         launcher taps return to the Web UI instead of Android Auto's media page. -->
+    <uses name="template" />
     <uses
         name="service"
         tools:ignore="InvalidUsesTagAttribute" />

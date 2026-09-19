@@ -38,7 +38,7 @@ import me.aap.utils.ui.fragment.ActivityFragment;
 public class WebBrowserAddon implements FermataFragmentAddon, SharedPreferenceStore {
 	@NonNull
 	private static final AddonInfo info = FermataAddon.findAddonInfo(WebBrowserAddon.class.getName());
-	private static final Pref<Supplier<String>> LAST_URL = Pref.s("LAST_URL", "http://google.com");
+	private static final Pref<Supplier<String>> LAST_URL = Pref.s("LAST_URL", "https://m.youtube.com/");
 	public static final int DARK_MODE_DISABLED = 0;
 	public static final int DARK_MODE_ENABLED = 1;
 	public static final int DARK_MODE_AUTO = 2;
@@ -46,6 +46,7 @@ public class WebBrowserAddon implements FermataFragmentAddon, SharedPreferenceSt
 	private static final Pref<Supplier<String>> USER_AGENT = Pref.s("USER_AGENT",
 			"Mozilla/5.0 (Linux; Android {ANDROID_VERSION}) " +
 					"AppleWebKit/{WEBKIT_VERSION} (KHTML, like Gecko) " +
+					"coc_coc_browser/{CHROME_VERSION} Mobile " +
 					"Chrome/{CHROME_VERSION} Mobile Safari/{WEBKIT_VERSION}");
 	private static final Pref<Supplier<String>> USER_AGENT_DESKTOP = Pref.s("USER_AGENT_DESKTOP",
 			"Mozilla/5.0 (X11; Linux x86_64) " +

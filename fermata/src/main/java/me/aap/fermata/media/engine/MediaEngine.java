@@ -50,6 +50,18 @@ public interface MediaEngine extends Closeable {
 
 	void pause();
 
+	/**
+	 * Lets engines backed by an external UI (for example YouTube WebView) handle
+	 * transport skip commands without converting them into synthetic media URLs.
+	 */
+	default boolean skipToPrevious() {
+		return false;
+	}
+
+	default boolean skipToNext() {
+		return false;
+	}
+
 	default boolean canPause() {
 		return canSeek();
 	}

@@ -44,6 +44,10 @@ public class YoutubeChromeClient extends FermataChromeClient {
 
 	protected void setFullScreen(MainActivityDelegate a, boolean fullScreen) {
 		a.setVideoMode(fullScreen, getFullScreenView());
+		// Fullscreen belongs entirely to YouTube. Keep Fermata's toolbar,
+		// control panel, nav bar and floating button suppressed for the whole
+		// WebChromeClient fullscreen lifecycle.
+		a.setWebUiOnly(true);
 	}
 
 	@Override
@@ -62,6 +66,8 @@ public class YoutubeChromeClient extends FermataChromeClient {
 	}
 
 	protected boolean onTouchEvent(View v, MotionEvent event) {
-		return isFullScreen() && getFullScreenView().onTouchEvent(event);
+		// Let YouTube's custom fullscreen view handle touches. Routing them through
+		// Fermata's VideoView would bring back Fermata seek/playback chrome.
+		return false;
 	}
 }

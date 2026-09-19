@@ -2,6 +2,7 @@ package me.aap.fermata.addon.web;
 
 import static me.aap.utils.ui.activity.ActivityListener.FRAGMENT_CONTENT_CHANGED;
 
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.webkit.WebResourceRequest;
@@ -12,7 +13,6 @@ import androidx.webkit.WebResourceErrorCompat;
 import androidx.webkit.WebViewClientCompat;
 import androidx.webkit.WebViewFeature;
 
-import me.aap.fermata.addon.web.yt.YoutubeFragment;
 import me.aap.fermata.ui.activity.MainActivityDelegate;
 import me.aap.utils.async.Completed;
 import me.aap.utils.async.FutureSupplier;
@@ -58,21 +58,39 @@ public class FermataWebClient extends WebViewClientCompat {
 	@Override
 	public boolean shouldOverrideUrlLoading(@NonNull WebView view,
 																					@NonNull WebResourceRequest request) {
-		if (isYoutubeUri(request.getUrl())) {
-			try {
-				MainActivityDelegate a =
-						MainActivityDelegate.getActivityDelegate(view.getContext()).peek();
-				if (a == null) return false;
-				if (!(a.showFragment(me.aap.fermata.R.id.youtube_fragment) instanceof YoutubeFragment f))
-					return false;
-				f.loadUrl(request.getUrl().toString());
-				return true;
-			} catch (IllegalArgumentException ex) {
-				Log.d(ex);
-			}
+		Uri uri = request.getUrl();
+		String scheme = uri.getScheme();
+
+		if (scheme == null) return false;
+		if ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)) {
+			// Keep YouTube and normal web navigation inside Fermata Web+.
+			// Do not hand YouTube links to the native phone app because this S21 FE
+			// is also acting as the Android Auto head unit.
+			return false;
 		}
 
-		return false;
+		if ("intent".equalsIgnoreCase(scheme)) {
+			try {
+				Intent intent = Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME);
+				String fallback = intent.getStringExtra("browser_fallback_url");
+				if ((fallback != null) && (fallback.startsWith("https://") || fallback.startsWith("http://"))) {
+					view.loadUrl(fallback);
+				}
+			} catch (Exception ex) {
+				Log.d(ex, "Blocked external intent URL: ", uri);
+			}
+			return true;
+		}
+
+		if ("vnd.youtube".equalsIgnoreCase(scheme) || "youtube".equalsIgnoreCase(scheme)) {
+			view.loadUrl("https://m.youtube.com/");
+			return true;
+		}
+
+		// External app schemes (market:, tel:, custom app links, etc.) are blocked
+		// in the AA build so Web+ never steals foreground from Open Headunit.
+		Log.d("Blocked external URL scheme in Android Auto: ", uri);
+		return true;
 	}
 
 	public static boolean isYoutubeUri(Uri uri) {

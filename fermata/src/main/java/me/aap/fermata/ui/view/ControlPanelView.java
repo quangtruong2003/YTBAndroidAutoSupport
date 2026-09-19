@@ -77,6 +77,7 @@ public class ControlPanelView extends ConstraintLayout
 	private final int textAppearance;
 	private PlaybackControlPrefs prefs;
 	private HideTimer hideTimer;
+	private boolean chromeSuppressed;
 	private byte mask;
 	private View gestureSource;
 	private TextView playbackTimer;
@@ -207,9 +208,28 @@ public class ControlPanelView extends ConstraintLayout
 		return mask != 0;
 	}
 
+	public void setChromeSuppressed(boolean suppressed) {
+		chromeSuppressed = suppressed;
+		if (suppressed) {
+			hideTimer = null;
+			super.setVisibility(GONE);
+		} else if (((mask & MASK_VISIBLE) != 0) && ((mask & MASK_VIDEO_MODE) == 0)) {
+			super.setVisibility(VISIBLE);
+		}
+		checkPlaybackTimer(getActivity());
+	}
+
 	@Override
 	public void setVisibility(int visibility) {
 		MainActivityDelegate a = getActivity();
+
+		if (chromeSuppressed) {
+			if (visibility == VISIBLE) mask |= MASK_VISIBLE;
+			else mask &= ~MASK_VISIBLE;
+			super.setVisibility(GONE);
+			checkPlaybackTimer(a);
+			return;
+		}
 
 		if (visibility == VISIBLE) {
 			mask |= MASK_VISIBLE;
@@ -240,6 +260,14 @@ public class ControlPanelView extends ConstraintLayout
 		hideTimer = null;
 		mask |= MASK_VIDEO_MODE;
 
+		if (chromeSuppressed) {
+			a.setBarsHidden(true);
+			a.getFloatingButton().setVisibility(GONE);
+			if (v != null && v.getVideoInfoView() != null) v.getVideoInfoView().setVisibility(GONE);
+			super.setVisibility(GONE);
+			return;
+		}
+
 		a.setBarsHidden(true);
 		setShowHideBarsIcon(a);
 
@@ -266,6 +294,12 @@ public class ControlPanelView extends ConstraintLayout
 		MainActivityDelegate a = getActivity();
 		hideTimer = null;
 		mask &= ~MASK_VIDEO_MODE;
+		if (chromeSuppressed) {
+			a.setBarsHidden(true);
+			a.getFloatingButton().setVisibility(GONE);
+			super.setVisibility(GONE);
+			return;
+		}
 		a.getFloatingButton().setVisibility(VISIBLE);
 
 		if ((mask & MASK_VISIBLE) == 0) {
@@ -374,6 +408,7 @@ public class ControlPanelView extends ConstraintLayout
 	}
 
 	public boolean onTouch(VideoView video) {
+		if (chromeSuppressed) return false;
 		MainActivityDelegate a = getActivity();
 		BodyLayout b = a.getBody();
 
@@ -413,6 +448,7 @@ public class ControlPanelView extends ConstraintLayout
 	}
 
 	public void onVideoSeek() {
+		if (chromeSuppressed) return;
 		MainActivityDelegate a = getActivity();
 		VideoView vv = a.getMediaServiceBinder().getMediaSessionCallback().getVideoView();
 

@@ -1,7 +1,6 @@
 package me.aap.fermata.addon.web;
 
 import static android.os.Build.*;
-import static me.aap.fermata.addon.web.FermataWebClient.isYoutubeUri;
 import static me.aap.fermata.util.Utils.dynCtx;
 
 import android.content.Context;
@@ -25,7 +24,6 @@ import java.util.Map;
 
 import me.aap.fermata.BuildConfig;
 import me.aap.fermata.addon.AddonManager;
-import me.aap.fermata.addon.web.yt.YoutubeFragment;
 import me.aap.fermata.ui.activity.MainActivityDelegate;
 import me.aap.fermata.ui.activity.MainActivityListener;
 import me.aap.fermata.ui.activity.VoiceCommand;
@@ -157,16 +155,9 @@ public class WebBrowserFragment extends MainActivityFragment
 		FermataWebView v = getWebView();
 
 		if (v != null) {
-			if (!(this instanceof YoutubeFragment) && isYoutubeUri(Uri.parse(url)) &&
-					AddonManager.get().hasAddon(me.aap.fermata.R.id.youtube_fragment)) {
-				String u = url;
-				MainActivityDelegate.getActivityDelegate(requireContext()).onSuccess(a -> {
-					if (a.showFragment(me.aap.fermata.R.id.youtube_fragment) instanceof YoutubeFragment f)
-						f.loadUrl(u);
-				});
-			} else {
-				v.loadUrl(url);
-			}
+			// This custom Web+ build keeps every web URL, including YouTube,
+			// inside the Android Auto WebView. Never hand it to a phone app.
+			v.loadUrl(url);
 		} else {
 			WebBrowserAddon addon = AddonManager.get().getAddon(WebBrowserAddon.class);
 			if (addon != null) addon.setLastUrl(url);
@@ -382,6 +373,6 @@ public class WebBrowserFragment extends MainActivityFragment
 	}
 
 	protected String getSearchUrl() {
-		return "https://www.google.com/search?q=";
+		return "https://coccoc.com/search?query=";
 	}
 }

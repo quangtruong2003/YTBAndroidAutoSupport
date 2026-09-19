@@ -189,6 +189,7 @@ public class MediaSessionCallback extends MediaSessionCompat.Callback
 	private Queue<Prioritized<MediaSessionCallbackAssistant>> assistants;
 	private FutureSupplier<?> playerTask = completedVoid();
 	private MediaMetadataCompat metadata;
+	private Runnable bridgeHeartbeat;
 
 	public MediaSessionCallback(FermataMediaService service, MediaSessionCompat session,
 															MediaLib lib,
@@ -223,7 +224,7 @@ public class MediaSessionCallback extends MediaSessionCompat.Callback
 
 		currentState = new PlaybackStateCompat.Builder().setActions(SUPPORTED_ACTIONS).build();
 		setPlaybackState(currentState);
-		session.setActive(true);
+		session.setActive(!service.usesExternalMediaBridge());
 
 		audioManager = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
 
@@ -415,6 +416,7 @@ public class MediaSessionCallback extends MediaSessionCompat.Callback
 	}
 
 	public void close() {
+		stopBridgeHeartbeat();
 		onStop();
 		session.setActive(false);
 		lib.getContext().unregisterReceiver(onNoisy);
@@ -498,6 +500,7 @@ public class MediaSessionCallback extends MediaSessionCompat.Callback
 	@Override
 	public void onPlayFromMediaId(String mediaId, Bundle extras) {
 		playerTask.cancel();
+		if (SuggestedMediaRegistry.play(mediaId)) return;
 		playerTask = playFromMediaId(mediaId, extras);
 	}
 
@@ -624,6 +627,8 @@ public class MediaSessionCallback extends MediaSessionCompat.Callback
 	@Override
 	public void onSkipToPrevious() {
 		playerTask.cancel();
+		MediaEngine eng = getEngine();
+		if ((eng != null) && eng.skipToPrevious()) return;
 		playerTask = skipTo(false, false);
 	}
 
@@ -635,6 +640,8 @@ public class MediaSessionCallback extends MediaSessionCompat.Callback
 	@Override
 	public void onSkipToNext() {
 		playerTask.cancel();
+		MediaEngine eng = getEngine();
+		if ((eng != null) && eng.skipToNext()) return;
 		playerTask = skipTo(true, false);
 	}
 
@@ -810,6 +817,7 @@ public class MediaSessionCallback extends MediaSessionCompat.Callback
 
 	@Override
 	public void onSkipToQueueItem(long queueId) {
+		if (SuggestedMediaRegistry.playQueueItem(queueId)) return;
 		PlayableItem pi = getCurrentItem();
 		if (pi == null) return;
 
@@ -1041,6 +1049,10 @@ public class MediaSessionCallback extends MediaSessionCompat.Callback
 				return completedVoid();
 			}
 
+			// Web-backed engines can advance inside their own player without
+			// creating a synthetic URL that a native MediaPlayer cannot open.
+			if (engine.skipToNext()) return completedVoid();
+
 			return getNextPlayable(i).then(this::prepareItem).then(next -> {
 				if (next != null) {
 					skipTo(true, next);
@@ -1142,6 +1154,7 @@ public class MediaSessionCallback extends MediaSessionCompat.Callback
 	private void setMetadata(MediaMetadataCompat metadata) {
 		this.metadata = metadata;
 		session.setMetadata(metadata);
+		SuggestedMediaRegistry.broadcastPlayback(metadata, currentState);
 	}
 
 	@Override
@@ -1277,9 +1290,48 @@ public class MediaSessionCallback extends MediaSessionCompat.Callback
 				.addCustomAction(i.isFavoriteItem() ? customFavoritesRemove : customFavoritesAdd).build();
 	}
 
+	private void startBridgeHeartbeat() {
+		if (!service.usesExternalMediaBridge()) return;
+		stopBridgeHeartbeat();
+		bridgeHeartbeat = new Runnable() {
+			@Override
+			public void run() {
+				if ((bridgeHeartbeat != this) ||
+						(currentState.getState() != STATE_PLAYING) ||
+						!service.usesExternalMediaBridge()) return;
+				SuggestedMediaRegistry.broadcastHeartbeat();
+				handler.postDelayed(this, 5000L);
+			}
+		};
+		SuggestedMediaRegistry.broadcastHeartbeat();
+		handler.postDelayed(bridgeHeartbeat, 5000L);
+	}
+
+	private void stopBridgeHeartbeat() {
+		Runnable h = bridgeHeartbeat;
+		bridgeHeartbeat = null;
+		if (h != null) handler.removeCallbacks(h);
+	}
+
 	private void setPlaybackState(PlaybackStateCompat state) {
 		currentState = state;
+		int playbackState = state.getState();
+		if (service.usesExternalMediaBridge()) {
+			// Android Auto talks to FermataMediaBridge. Keep this internal playback
+			// session out of Gearhead's active-session list to avoid a duplicate
+			// playback-only source with ComponentInfo{package/}.
+			session.setActive(false);
+		} else if ((playbackState != STATE_NONE) && (playbackState != STATE_STOPPED) &&
+				(playbackState != STATE_ERROR)) {
+			session.setActive(true);
+		}
 		session.setPlaybackState(state);
+		// Do not erase the bridge's persisted now-playing card with the synthetic
+		// STATE_NONE emitted while this service is only being constructed.
+		if ((metadata != null) || (playbackState != STATE_NONE))
+			SuggestedMediaRegistry.broadcastPlayback(metadata, state);
+		if (playbackState == STATE_PLAYING) startBridgeHeartbeat();
+		else stopBridgeHeartbeat();
 		service.updateNotification(state.getState(), getCurrentItem());
 		fireBroadcastEvent(l -> l.onPlaybackStateChanged(this, state));
 
