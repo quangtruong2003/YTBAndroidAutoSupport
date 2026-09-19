@@ -208,6 +208,8 @@ public final class SuggestedMediaRegistry {
 				CharSequence subtitle = d.getSubtitle();
 				if (title != null) i.putExtra("title", title.toString());
 				if (subtitle != null) i.putExtra("subtitle", subtitle.toString());
+				long duration = metadata.getLong(MediaMetadataCompat.METADATA_KEY_DURATION);
+				if (duration > 0L) i.putExtra("duration", duration);
 				String art = metadata.getString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI);
 				if ((art == null) || art.isEmpty())
 					art = metadata.getString(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON_URI);

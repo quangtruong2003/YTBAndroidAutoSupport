@@ -111,6 +111,14 @@ public class FermataMediaService extends MediaBrowserServiceCompat {
 	private Action actionFavRm;
 	private Bitmap defaultAudioIcon;
 	private Bitmap defaultVideoIcon;
+	private final Runnable bridgeHeartbeat = new Runnable() {
+		@Override
+		public void run() {
+			if (!usesExternalMediaBridge() || (callback == null) || !callback.isPlaying()) return;
+			SuggestedMediaRegistry.broadcastHeartbeat();
+			App.get().getHandler().postDelayed(this, 5000L);
+		}
+	};
 
 	public MediaLib getLib() {
 		return lib;
@@ -148,10 +156,16 @@ public class FermataMediaService extends MediaBrowserServiceCompat {
 		callback.onPrepare();
 		session.setCallback(callback);
 
-		Intent mediaButtonIntent =
-				new Intent(Intent.ACTION_MEDIA_BUTTON, null, ctx, MediaButtonReceiver.class);
-		session.setMediaButtonReceiver(
-				PendingIntent.getBroadcast(ctx, 0, mediaButtonIntent, FLAG_IMMUTABLE));
+		if (usesExternalMediaBridge()) {
+			// Web+ keeps this transport session internal. Let the Android Auto-facing
+			// bridge own media keys so Gearhead sees one Fermata media identity.
+			session.setMediaButtonReceiver(null);
+		} else {
+			Intent mediaButtonIntent =
+					new Intent(Intent.ACTION_MEDIA_BUTTON, null, ctx, MediaButtonReceiver.class);
+			session.setMediaButtonReceiver(
+					PendingIntent.getBroadcast(ctx, 0, mediaButtonIntent, FLAG_IMMUTABLE));
+		}
 		notifColor = Color.parseColor(DEFAULT_NOTIF_COLOR);
 		App.get().getScheduler().schedule(lib::cleanUpPrefs, 1, TimeUnit.HOURS);
 		SuggestedMediaRegistry.setChangeListener(() -> {
@@ -175,6 +189,7 @@ public class FermataMediaService extends MediaBrowserServiceCompat {
 
 	@Override
 	public void onDestroy() {
+		App.get().getHandler().removeCallbacks(bridgeHeartbeat);
 		SuggestedMediaRegistry.setChangeListener(null);
 		for (FermataAddon a : AddonManager.get().getAddons()) {
 			if (a instanceof FermataMediaServiceAddon)
@@ -314,6 +329,16 @@ public class FermataMediaService extends MediaBrowserServiceCompat {
 		// or a real playback transition to publish.
 		if ((st != STATE_NONE) || (session.getController().getMetadata() != null))
 			broadcastPlaybackToBridge(st);
+
+		if (usesExternalMediaBridge()) {
+			session.setActive(false);
+			App.get().getHandler().removeCallbacks(bridgeHeartbeat);
+			if (st == STATE_PLAYING) {
+				SuggestedMediaRegistry.broadcastHeartbeat();
+				App.get().getHandler().postDelayed(bridgeHeartbeat, 5000L);
+			}
+		}
+
 		switch (st) {
 			case STATE_NONE, STATE_STOPPED, STATE_ERROR -> stopForeground(true);
 			case STATE_PAUSED -> {
@@ -345,6 +370,10 @@ public class FermataMediaService extends MediaBrowserServiceCompat {
 				if (d.getTitle() != null) i.putExtra("title", d.getTitle().toString());
 				if (d.getSubtitle() != null) i.putExtra("subtitle", d.getSubtitle().toString());
 				if (d.getIconUri() != null) i.putExtra("art", d.getIconUri().toString());
+			}
+			if (md != null) {
+				long duration = md.getLong(MediaMetadataCompat.METADATA_KEY_DURATION);
+				if (duration > 0L) i.putExtra("duration", duration);
 			}
 			sendBroadcast(i);
 		} catch (Exception ex) {

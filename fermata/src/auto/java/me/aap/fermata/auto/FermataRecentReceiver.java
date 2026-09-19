@@ -1,6 +1,7 @@
 package me.aap.fermata.auto;
 
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 
@@ -32,7 +33,14 @@ public class FermataRecentReceiver extends BroadcastReceiver {
                         cb.getSession().setActive(true);
                         Log.i("FermataRecentReceiver: media session active");
                     } else if (bridged) {
-                        Log.i("FermataRecentReceiver: media bridge owns Android Auto session");
+                        Intent activateBridge =
+                                new Intent("me.aap.fermata.mediabridge.action.ACTIVATE")
+                                        .setComponent(new ComponentName(
+                                                "me.aap.fermata.mediabridge",
+                                                "me.aap.fermata.mediabridge.SuggestionReceiver"))
+                                        .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
+                        context.sendBroadcast(activateBridge);
+                        Log.i("FermataRecentReceiver: requested media bridge recency activation");
                     }
                 })
                 .onFailure(Log::e);
