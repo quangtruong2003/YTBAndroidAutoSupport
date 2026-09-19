@@ -82,7 +82,9 @@ public class YoutubeWebView extends FermataWebView {
 
 	@Override
 	public void loadUrl(@NonNull String url) {
-		Log.d("Loading URL: " + url);
+		// Avoid dumping large injected JavaScript strings to logcat on the debug
+		// build. This was surprisingly expensive during YouTube startup.
+		if (!url.startsWith("javascript:")) Log.d("Loading URL: " + url);
 		super.loadUrl(url);
 	}
 
@@ -95,11 +97,13 @@ public class YoutubeWebView extends FermataWebView {
 
 	@Override
 	protected void pageLoaded(String uri) {
+		// Attach only the playback bridge immediately. Everything else is secondary
+		// and is delayed so first paint/touch is not competing with extra JS/disk IO.
 		attachListeners();
-		injectSponsorBlock();
-		addFocusHighlight();
-		refreshRecommendations();
-		CookieManager.getInstance().flush();
+		postDelayed(this::injectSponsorBlock, 1200L);
+		postDelayed(this::addFocusHighlight, 1600L);
+		postDelayed(this::refreshRecommendations, 1800L);
+		postDelayed(() -> CookieManager.getInstance().flush(), 2500L);
 	}
 
 	protected void submitForm() {
@@ -117,10 +121,9 @@ public class YoutubeWebView extends FermataWebView {
 		// YouTube renders the recommendation rail lazily. A few fixed delays were
 		// not enough on Android Auto, so install a debounced MutationObserver and
 		// keep a couple of fallback scans for slow pages.
-		postDelayed(this::installRecommendationPublisher, 500L);
-		postDelayed(this::publishRecommendations, 2500L);
-		postDelayed(this::publishRecommendations, 7000L);
-		postDelayed(this::publishRecommendations, 14000L);
+		postDelayed(this::installRecommendationPublisher, 1000L);
+		postDelayed(this::publishRecommendations, 4500L);
+		postDelayed(this::publishRecommendations, 10000L);
 	}
 
 	private void installRecommendationPublisher() {
@@ -143,7 +146,7 @@ public class YoutubeWebView extends FermataWebView {
 				"}catch(e){" + JS_EVENT + "(" + JS_ERR + ",'Recommendations scan: '+e);return 0;}};" +
 				"if(window.__fermataRecommendationsObserver)window.__fermataRecommendationsObserver.disconnect();" +
 				"var timer=null;window.__fermataRecommendationsObserver=new MutationObserver(function(){" +
-				"if(timer)clearTimeout(timer);timer=setTimeout(function(){window.__fermataPublishRecommendations();},700);});" +
+				"if(timer)clearTimeout(timer);timer=setTimeout(function(){window.__fermataPublishRecommendations();},1500);});" +
 				"window.__fermataRecommendationsObserver.observe(document.documentElement,{childList:true,subtree:true});" +
 				"window.__fermataPublishRecommendations();" +
 				"}catch(e){" + JS_EVENT + "(" + JS_ERR + ",'Recommendations observer: '+e);}})();";
@@ -157,26 +160,31 @@ public class YoutubeWebView extends FermataWebView {
 	private void attachListeners() {
 		String debug = BuildConfig.D ? JS_EVENT + "(" + JS_VIDEO_FOUND + ", null);\n" : "";
 		String scale = getAddon().getScale().prefName();
-		loadUrl("javascript:\n" +
+		loadUrl("javascript:(function(){\n" +
 				"function attachVideoListeners(v) {\n" +
-				"  if (v.getAttribute('FermataAttached') === 'true') return;\n" +
+				"  if (!v || v.getAttribute('FermataAttached') === 'true') return;\n" +
 				"  v.setAttribute('FermataAttached', 'true');\n" +
 				"  v.setAttribute('style', 'object-fit:" + scale + "');\n" + debug +
 				"  if ((v.currentTime > 0) && !v.paused && !v.ended) " + JS_EVENT + "(" + JS_VIDEO_PLAYING +
 				", v.currentSrc);\n" +
-				"  v.addEventListener('playing', function(e) {" + JS_EVENT + "(" + JS_VIDEO_PLAYING +
+				"  v.addEventListener('playing', function() {" + JS_EVENT + "(" + JS_VIDEO_PLAYING +
 				", v.currentSrc);});\n" +
-				"  v.addEventListener('pause', function(e) {" + JS_EVENT + "(" + JS_VIDEO_PAUSED +
+				"  v.addEventListener('pause', function() {" + JS_EVENT + "(" + JS_VIDEO_PAUSED +
 				", v.currentSrc);});\n" +
-				"  v.addEventListener('ended', function(e) {" + JS_EVENT + "(" + JS_VIDEO_ENDED +
+				"  v.addEventListener('ended', function() {" + JS_EVENT + "(" + JS_VIDEO_ENDED +
 				", null);});\n" +
 				"}\n" +
-				"function findVideo() {\n" +
-				"  var video = document.querySelectorAll('video');" +
-				"  video.forEach(attachVideoListeners);\n" +
-				"   setTimeout(findVideo, 1000);\n" +
-				"}\n" +
-				"findVideo();");
+				"document.querySelectorAll('video').forEach(attachVideoListeners);\n" +
+				"if(window.__fermataVideoObserver)window.__fermataVideoObserver.disconnect();\n" +
+				"window.__fermataVideoObserver=new MutationObserver(function(ms){\n" +
+				"  ms.forEach(function(m){m.addedNodes.forEach(function(n){\n" +
+				"    if(n.nodeType!==1)return;\n" +
+				"    if(n.tagName==='VIDEO')attachVideoListeners(n);\n" +
+				"    if(n.querySelectorAll)n.querySelectorAll('video').forEach(attachVideoListeners);\n" +
+				"  });});\n" +
+				"});\n" +
+				"window.__fermataVideoObserver.observe(document.documentElement,{childList:true,subtree:true});\n" +
+				"})();");
 	}
 
 	private void injectSponsorBlock() {

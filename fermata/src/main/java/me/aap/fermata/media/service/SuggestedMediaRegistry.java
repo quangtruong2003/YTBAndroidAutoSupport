@@ -83,9 +83,12 @@ public final class SuggestedMediaRegistry {
 						.setMediaId(MEDIA_ID_PREFIX + id)
 						.setTitle(title)
 						.setSubtitle("YouTube")
-						.setIconBitmap(fallback)
 						.setMediaUri(Uri.parse("https://m.youtube.com/watch?v=" + id));
+				// Prefer the remote thumbnail URI and let the Android Auto/media client
+				// fetch/cache it. Pre-downloading every recommendation in Fermata caused
+				// a burst of network + bitmap work exactly while the WebView was starting.
 				if (thumb.startsWith("https://")) d.setIconUri(Uri.parse(thumb));
+				else d.setIconBitmap(fallback);
 				result.add(new MediaItem(d.build(), MediaItem.FLAG_PLAYABLE));
 			}
 
@@ -96,14 +99,8 @@ public final class SuggestedMediaRegistry {
 			notifyChanged();
 			broadcastToMediaBridge(json);
 
-			FermataApplication app = FermataApplication.get();
-			for (MediaItem item : result) {
-				Uri icon = item.getDescription().getIconUri();
-				if (icon == null) continue;
-				String mediaId = item.getMediaId();
-				app.getBitmapCache().getBitmap(app, icon.toString(), true, true).main()
-						.onSuccess(bitmap -> updateIcon(mediaId, bitmap));
-			}
+			// Keep startup/UI work minimal. Artwork is exposed as iconUri above;
+			// do not eagerly download and decode the whole recommendation row here.
 		} catch (Exception ex) {
 			Log.e(ex, "Failed to update YouTube suggestions");
 		}

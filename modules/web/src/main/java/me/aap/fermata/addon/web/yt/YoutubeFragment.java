@@ -81,8 +81,6 @@ public class YoutubeFragment extends WebBrowserFragment implements FermataServic
 			YoutubeChromeClient chromeClient = new YoutubeChromeClient(webView, videoView);
 			webView.init(addon, webClient, chromeClient);
 			registerListeners(a);
-			webView.loadUrl(DEFAULT_URL);
-			if (!DEFAULT_URL.equals(url)) a.post(() -> webView.loadUrl(url));
 
 			boolean pendingSelection = SuggestedMediaRegistry.hasPendingPlayback();
 			recommendationPlaybackPending = pendingSelection;
@@ -118,6 +116,12 @@ public class YoutubeFragment extends WebBrowserFragment implements FermataServic
 					else cb.onSkipToPrevious();
 				}
 			});
+
+			// Do one initial navigation only. The old path loaded the YouTube home page
+			// first and then immediately loaded the restored/pending target, which made
+			// cold starts noticeably slower and could race a car-app relaunch.
+			if (!pendingSelection) webView.loadUrl(url);
+
 			a.postDelayed(() -> {
 				PreferenceStore ps = addon.getPreferenceStore();
 				long pos = ps.getLongPref(RESUME_POS);
@@ -186,6 +190,14 @@ public class YoutubeFragment extends WebBrowserFragment implements FermataServic
 		SuggestedMediaRegistry.setPlaybackHandler(null);
 		SuggestedMediaRegistry.setControlHandler(null);
 		MainActivityDelegate a = MainActivityDelegate.get(requireContext());
+		// Fullscreen transitions can transiently pause the Fragment. Only tear down
+		// YouTube's custom fullscreen view when this view is actually being destroyed.
+		// Doing it from onPause() made Fermata chrome reappear over a playing video.
+		FermataWebView v = getWebView();
+		if (v != null) {
+			FermataChromeClient chrome = v.getWebChromeClient();
+			if ((chrome != null) && chrome.isFullScreen()) chrome.exitFullScreen();
+		}
 		a.setWebUiOnly(false);
 		unregisterListeners(a);
 		super.onDestroyView();
@@ -205,18 +217,9 @@ public class YoutubeFragment extends WebBrowserFragment implements FermataServic
 	@Override
 	public void onPause() {
 		if (BuildConfig.AUTO) {
-			// Android Auto may destroy and recreate the car surface while switching apps.
-			// Never carry a WebChromeClient custom fullscreen view across that boundary:
-			// its Surface can become stale and leave a black screen on the next launch.
-			FermataWebView v = getWebView();
-			if (v != null) {
-				FermataChromeClient chrome = v.getWebChromeClient();
-				if ((chrome != null) && chrome.isFullScreen()) chrome.exitFullScreen();
-				v.setVisibility(View.VISIBLE);
-			}
-			// A WebChromeClient fullscreen transition can temporarily pause the car
-			// fragment. Do not expose Fermata chrome during that transition; onDestroyView
-			// is the point where we restore normal chrome.
+			// WebChromeClient fullscreen itself may transiently pause the car Fragment.
+			// Keep the custom video surface intact and keep all Fermata chrome suppressed.
+			// onDestroyView() performs the real fullscreen cleanup when we actually leave.
 			MainActivityDelegate.getActivityDelegate(getContext()).onSuccess(a -> a.setWebUiOnly(true));
 		} else {
 			MainActivityDelegate.getActivityDelegate(getContext()).onSuccess(a -> {

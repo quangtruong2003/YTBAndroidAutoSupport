@@ -312,7 +312,10 @@ public class FermataChromeClient extends WebChromeClient {
 
 	@Override
 	public boolean onConsoleMessage(ConsoleMessage m) {
-		Log.d("[JS:", m.lineNumber(), "] ", m.message());
+		// YouTube is extremely chatty. Logging every console line on a debug build
+		// adds avoidable IO/formatting work to scroll and startup paths.
+		if (m.messageLevel() == ConsoleMessage.MessageLevel.ERROR)
+			Log.d("[JS:", m.lineNumber(), "] ", m.message());
 		return true;
 	}
 }

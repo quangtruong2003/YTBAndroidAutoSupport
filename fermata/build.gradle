@@ -42,7 +42,16 @@ android {
         }
 
         debug {
-            debuggable true
+            // PERF_BUILD keeps the exact .debug application id/signature used by
+            // our Android Auto integration, but runs the production optimizer and
+            // removes debug-only logging/metadata for the head-unit install.
+            def perfBuild = project.getProperties().getOrDefault('PERF_BUILD', 'false').toBoolean()
+            debuggable !perfBuild
+            minifyEnabled perfBuild
+            if (perfBuild) {
+                proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'),
+                        '../proguard-rules.pro', '../depends/utils/proguard-rules.pro'
+            }
             applicationIdSuffix '.debug'
             resValue "string", "app_name_auto", "@string/app_name_auto_debug"
             resValue "string", "app_name_mobile", "@string/app_name_mobile_debug"
@@ -51,7 +60,7 @@ android {
             resValue "string", "mirror_service_name", "@string/mirror_service_name_debug"
             resValue "string", "mirror_fs_service_name", "@string/mirror_fs_service_name_debug"
             signingConfig = signingConfigs.release
-            buildConfigField "boolean", 'D', 'true'
+            buildConfigField "boolean", 'D', perfBuild ? 'false' : 'true'
         }
     }
 
