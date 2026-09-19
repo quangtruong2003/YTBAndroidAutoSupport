@@ -272,65 +272,23 @@ public class YoutubeWebView extends FermataWebView {
 	}
 
 	private void prevNext(boolean next) {
-		FermataChromeClient chrome = getWebChromeClient();
-		if (chrome == null) return;
-		chrome.exitFullScreen().thenRun(() -> evaluateJavascript("""
-				(function() {
-				  var next = %s;
-				  var player = document.querySelector('#movie_player') || document.querySelector('.html5-video-player');
-				  var before = location.href;
-				  var selectors = next ?
-				    ['.ytp-next-button','button.player-controls-middle-next-button','button.player-middle-controls-prev-next-button:last-of-type'] :
-				    ['.ytp-prev-button','button.player-controls-middle-prev-button','button.player-middle-controls-prev-next-button:first-of-type'];
-				  function clickFallback() {
-				    for (var i = 0; i < selectors.length; i++) {
-				      var b = document.querySelector(selectors[i]);
-				      if (b) { b.click(); return true; }
-				    }
-				    return false;
-				  }
-				  var acted = false;
-				  try {
-				    if (player) {
-				      if (next && typeof player.nextVideo === 'function') { player.nextVideo(); acted = true; }
-				      else if (!next && typeof player.previousVideo === 'function') { player.previousVideo(); acted = true; }
-				    }
-				  } catch (e) {}
-				  if (!acted) acted = clickFallback();
-				  if (!acted) return false;
-				  // On standalone watch pages YouTube exposes nextVideo() even when that call
-				  // is a no-op. If the URL did not move, click the visible next/previous control.
-				  setTimeout(function(){ if (location.href === before) clickFallback(); }, 650);
-				  // YouTube can apply a second autoplay/mute transition several seconds after
-				  nextVideo()/previousVideo(). Keep the newly selected video aligned with the
-				  user's latest transport command throughout that transition.
-				  if (window.__fermataSkipTimer) clearInterval(window.__fermataSkipTimer);
-				  var until = Date.now() + 6500;
-				  function settleSkip() {
-				    var v = document.querySelector('video');
-				    var p = document.querySelector('#movie_player') || document.querySelector('.html5-video-player');
-				    if (v) {
-				      if (window.__fermataDesiredPlaying === false) {
-				        try { if (!v.paused) v.pause(); } catch(e) {}
-				      } else {
-				        try {
-				          if (p && typeof p.unMute === 'function') p.unMute();
-				          if (v.muted) v.muted = false;
-				          if (v.volume === 0) v.volume = 1.0;
-				          if (v.paused) { var r = v.play(); if (r && r.catch) r.catch(function(){}); }
-				        } catch(e) {}
-				      }
-				    }
-				    if (Date.now() >= until) {
-				      clearInterval(window.__fermataSkipTimer);
-				      window.__fermataSkipTimer = null;
-				    }
-				  }
-				  settleSkip();
-				  window.__fermataSkipTimer = setInterval(settleSkip, 150);
-				  return true;
-				})();
-				""".formatted(next ? "true" : "false"), null));
+		Log.i("YouTube WebView transport: ", next ? "next" : "previous");
+		// Keep the site's fullscreen view intact and issue exactly one transport action.
+		// A larger settling script caused duplicate/no-op navigation on YouTube's SPA.
+		String js = "javascript:(function(){" +
+				"var n=" + (next ? "true" : "false") + ";" +
+				"var p=document.querySelector('#movie_player')||document.querySelector('.html5-video-player');" +
+				"try{if(p){" +
+				"(n&&typeof p.nextVideo==='function'?(p.nextVideo(),1):" +
+				"(!n&&typeof p.previousVideo==='function'?(p.previousVideo(),1):0));" +
+				"return;}}catch(e){}" +
+				"var s=n?['.ytp-next-button','button.player-controls-middle-next-button'," +
+				"'button.player-middle-controls-prev-next-button:last-of-type']:" +
+				"['.ytp-prev-button','button.player-controls-middle-prev-button'," +
+				"'button.player-middle-controls-prev-next-button:first-of-type'];" +
+				"for(var i=0;i<s.length;i++){var b=document.querySelector(s[i]);if(b){b.click();break;}}" +
+				"})();";
+		loadUrl(js);
 	}
 
 	FutureSupplier<Long> getDuration() {

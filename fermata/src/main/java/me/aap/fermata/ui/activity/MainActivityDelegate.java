@@ -604,7 +604,9 @@ public class MainActivityDelegate extends ActivityDelegate
 	 */
 	public void setWebUiOnly(boolean webUiOnly) {
 		App.get().getHandler().post(() -> {
-			if (this.webUiOnly == webUiOnly) return;
+			// Re-assert the requested chrome state every time. Fullscreen/video-mode
+			// transitions can independently make bars or the floating button visible
+			// even while webUiOnly is already true.
 			this.webUiOnly = webUiOnly;
 			getControlPanel().setChromeSuppressed(webUiOnly);
 			if (webUiOnly) {

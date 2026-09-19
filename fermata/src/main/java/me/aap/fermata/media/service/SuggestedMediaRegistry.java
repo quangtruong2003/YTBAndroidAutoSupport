@@ -325,9 +325,14 @@ public final class SuggestedMediaRegistry {
 		controlHandler = handler;
 	}
 
-	public static void control(String command) {
+	public static boolean control(String command) {
 		ControlHandler h = controlHandler;
-		if (h != null) App.get().getHandler().post(() -> h.control(command));
+		if (h == null) {
+			Log.i("No YouTube UI control handler for command: ", command);
+			return false;
+		}
+		App.get().getHandler().post(() -> h.control(command));
+		return true;
 	}
 
 	public static boolean play(String mediaId) {

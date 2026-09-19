@@ -165,19 +165,14 @@ class YoutubeMediaEngine implements MediaEngine, OverlayMenu.SelectionHandler {
 
 	@Override
 	public boolean skipToPrevious() {
-		String previous = pageHistory.pollLast();
-		if (isWatchUrl(previous)) {
-			pageUrl = previous;
-			resumePosition = 0L;
-			web.loadUrl(previous);
-		} else {
-			web.prev();
-		}
+		Log.i("YouTube engine transport: previous");
+		web.prev();
 		return true;
 	}
 
 	@Override
 	public boolean skipToNext() {
+		Log.i("YouTube engine transport: next");
 		web.next();
 		return true;
 	}
