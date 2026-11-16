@@ -13,6 +13,9 @@ env:
   JAVA_VERSION: '17'
   JAVA_DISTRIBUTION: 'temurin'
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build Fermata Auto APKs
@@ -124,9 +127,9 @@ jobs:
            [ -z "$APP_NAME" ] || ARGS+=("-PAPP_NAME=$APP_NAME")
            [ -z "$APP_ID_SFX" ] || ARGS+=("-PAPP_ID_SFX=$APP_ID_SFX")
            ./gradlew fermata:packageAutoReleaseUniversalApk -PABI=arm64-v8a "${ARGS[@]}"
-          mv $out/*.apk dist/arm64/
+          mv $out/*.apk dist/arm64/fermata-auto-arm64.apk
           ./gradlew fermata:packageAutoReleaseUniversalApk -PABI=armeabi-v7a "${ARGS[@]}"
-          mv $out/*.apk dist/arm/
+          mv $out/*.apk dist/arm/fermata-auto-arm.apk
 
       - name: Upload arm64 APK
         uses: actions/upload-artifact@v4
@@ -143,3 +146,28 @@ jobs:
           path: dist/arm/*.apk
           retention-days: 30
           if-no-files-found: error
+
+  release:
+    name: Publish APK release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download APK artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fermata-auto-*
+          path: dist
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}"
+          --repo "${GITHUB_REPOSITORY}"
+          --title "Fermata Web+ ${GITHUB_REF_NAME}"
+          --notes "Automated ARM64 and ARM APK builds for ${GITHUB_REF_NAME}."
+          dist/*/*.apk
