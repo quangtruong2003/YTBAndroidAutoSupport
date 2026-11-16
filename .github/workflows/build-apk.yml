@@ -36,42 +36,6 @@ jobs:
           echo "APP_VERSION=$app_version" >> $GITHUB_ENV
           echo "ANDROID_NDK_VERSION=$(version ndkVersion)" >> $GITHUB_ENV
 
-      - name: Export vars
-        env:
-          APP_NAME: ${{ vars.APP_NAME }}
-          APP_ID_SFX: ${{ vars.APP_ID_SFX }}
-          ARTIFACT_SFX: ${{ vars.ARTIFACT_SFX }}
-        run: |
-          export_vars() {
-            for name in "$@"; do
-              local value="${!name}"
-              [ -z "$value" ] && continue
-              [ "$value" = "none" ] && value=""
-              echo "$name=$value" >> "$GITHUB_ENV"
-            done
-          }
-          export_vars APP_NAME APP_ID_SFX ARTIFACT_SFX
-
-      - name: Prepare build identifiers
-        env:
-          BRANCH_OWNER: ${{ github.event.pull_request.head.repo.owner.login || github.repository_owner }}
-          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
-        run: |
-          [ -v APP_NAME ] && [ -v APP_ID_SFX ] && [ -v ARTIFACT_SFX ] && exit 0
-
-          sanitize_package_segment() {
-            tr '[:upper:]' '[:lower:]' <<< "$1" \
-              | sed -E 's/[^a-z0-9]+/_/g; s/^_+|_+$//g; s/_+/_/g; s/^([0-9])/x\1/'
-          }
-
-          owner="$(sanitize_package_segment "$BRANCH_OWNER")"
-          branch="$(sanitize_package_segment "$BRANCH_NAME")"
-          sha="$(git rev-parse --short HEAD)"
-
-          [ -v APP_NAME ] || echo "APP_NAME=Fermata Auto (${BRANCH_OWNER}-${sha})" >> "$GITHUB_ENV"
-          [ -v APP_ID_SFX ] || echo "APP_ID_SFX=.${owner}" >> "$GITHUB_ENV"
-          [ -v ARTIFACT_SFX ] || echo "ARTIFACT_SFX=-${owner}-${branch}" >> "$GITHUB_ENV"
-
       - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
@@ -118,32 +82,21 @@ jobs:
       - name: Build APKs
         env:
           NO_GS: true
+          FERMATA_WEB_ONLY: '1'
         run: |
           out=fermata/build/outputs/apk_from_bundle/autoRelease
-          mkdir -p dist/arm64 dist/arm
-          echo "App name: $APP_NAME"
-          echo "Package suffix: $APP_ID_SFX"
-          ARGS=(--build-cache)
-           [ -z "$APP_NAME" ] || ARGS+=("-PAPP_NAME=$APP_NAME")
-           [ -z "$APP_ID_SFX" ] || ARGS+=("-PAPP_ID_SFX=$APP_ID_SFX")
-           ./gradlew fermata:packageAutoReleaseUniversalApk -PABI=arm64-v8a "${ARGS[@]}"
-          mv $out/*.apk dist/arm64/fermata-auto-arm64.apk
-          ./gradlew fermata:packageAutoReleaseUniversalApk -PABI=armeabi-v7a "${ARGS[@]}"
-          mv $out/*.apk dist/arm/fermata-auto-arm.apk
+          mkdir -p dist
+          echo "App name: Fermata Web+"
+          echo "Application ID: me.aap.fermata.webplus.auto"
+          ARGS=(--build-cache -PWEB_ONLY=1 -PAPP_ID=me.aap.fermata.webplus "-PAPP_NAME=Fermata Web+")
+          ./gradlew fermata:packageAutoReleaseUniversalApk -PABI=arm64-v8a "${ARGS[@]}"
+          mv $out/*.apk dist/fermata-webplus-universal.apk
 
-      - name: Upload arm64 APK
+      - name: Upload Fermata Web+ APK
         uses: actions/upload-artifact@v4
         with:
-          name: fermata-auto-${{ env.APP_VERSION }}${{ env.ARTIFACT_SFX }}-arm64
-          path: dist/arm64/*.apk
-          retention-days: 30
-          if-no-files-found: error
-
-      - name: Upload arm APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: fermata-auto-${{ env.APP_VERSION }}${{ env.ARTIFACT_SFX }}-arm
-          path: dist/arm/*.apk
+          name: fermata-webplus-${{ env.APP_VERSION }}
+          path: dist/*.apk
           retention-days: 30
           if-no-files-found: error
 
@@ -159,7 +112,7 @@ jobs:
       - name: Download APK artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: fermata-auto-*
+          pattern: fermata-webplus-*
           path: dist
 
       - name: Publish GitHub Release
@@ -169,5 +122,5 @@ jobs:
           gh release create "${GITHUB_REF_NAME}"
           --repo "${GITHUB_REPOSITORY}"
           --title "Fermata Web+ ${GITHUB_REF_NAME}"
-          --notes "Automated ARM64 and ARM APK builds for ${GITHUB_REF_NAME}."
+          --notes "Universal Fermata Web+ APK build for ${GITHUB_REF_NAME}."
           dist/*/*.apk
