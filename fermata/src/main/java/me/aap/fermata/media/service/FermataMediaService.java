@@ -163,10 +163,8 @@ public class FermataMediaService extends MediaBrowserServiceCompat {
 		App.get().getScheduler().schedule(lib::cleanUpPrefs, 1, TimeUnit.HOURS);
 		SuggestedMediaRegistry.setChangeListener(() -> {
 			var queue = SuggestedMediaRegistry.getQueueItems();
-			if (!queue.isEmpty()) {
-				session.setQueue(queue);
-				session.setQueueTitle("Dành cho bạn");
-			}
+			session.setQueue(queue);
+			session.setQueueTitle(queue.isEmpty() ? null : "Dành cho bạn");
 			notifyChildrenChanged(SuggestedMediaRegistry.ROOT_ID);
 			// Android Auto falls back to the top of the normal browse tree when it
 			// does not ask for EXTRA_SUGGESTED explicitly. Refresh that root too.

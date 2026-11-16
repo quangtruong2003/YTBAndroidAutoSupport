@@ -504,6 +504,14 @@ public class MediaSessionCallback extends MediaSessionCompat.Callback
 		playerTask = playFromMediaId(mediaId, extras);
 	}
 
+	@Override
+	public void onPlayFromUri(Uri uri, Bundle extras) {
+		playerTask.cancel();
+		boolean handled = SuggestedMediaRegistry.playUri(uri);
+		if (handled) return;
+		super.onPlayFromUri(uri, extras);
+	}
+
 	private FutureSupplier<Void> playFromMediaId(String mediaId, Bundle extras) {
 		return lib.getItem(mediaId).then(i -> {
 			if (i instanceof PlayableItem) {

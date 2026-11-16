@@ -173,7 +173,9 @@ class YoutubeMediaEngine implements MediaEngine, OverlayMenu.SelectionHandler {
 	@Override
 	public boolean skipToNext() {
 		Log.i("YouTube engine transport: next");
+		boolean wasPlaying = cb.isPlaying();
 		web.next();
+		if (wasPlaying) web.postDelayed(web::playAudible, 900L);
 		return true;
 	}
 

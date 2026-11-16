@@ -39,11 +39,6 @@ public final class SuggestedMediaRegistry {
 	private static final String PREFS = "youtube_suggestions";
 	private static final String PREF_JSON = "json";
 	private static final String PREF_PENDING_URI = "pending_uri";
-	private static final String OPENHU_PACKAGE = "com.andrerinas.headunitrevived";
-	private static final String OPENHU_FERMATA_RECEIVER =
-			"com.andrerinas.openheadunit.connection.self.FermataCarAppLaunchReceiver";
-	private static final String ACTION_OPEN_FERMATA =
-			"com.andrerinas.openheadunit.action.OPEN_FERMATA_WEB";
 	private static final String ACTION_BRIDGE_UPDATE =
 			"me.aap.fermata.mediabridge.action.UPDATE_SUGGESTIONS";
 	private static final String ACTION_BRIDGE_PLAYBACK =
@@ -242,20 +237,20 @@ public final class SuggestedMediaRegistry {
 	}
 
 	public static List<MediaItem> getItems() {
-		return items;
+		return (playbackHandler == null) ? Collections.emptyList() : items;
 	}
 
 	@Nullable
 	public static MediaItem getItem(String mediaId) {
 		if (mediaId == null) return null;
-		for (MediaItem item : items) {
+		for (MediaItem item : getItems()) {
 			if (mediaId.equals(item.getMediaId())) return item;
 		}
 		return null;
 	}
 
 	public static List<QueueItem> getQueueItems() {
-		List<MediaItem> current = items;
+		List<MediaItem> current = getItems();
 		if (current.isEmpty()) return Collections.emptyList();
 		List<QueueItem> queue = new ArrayList<>(current.size());
 		for (int i = 0; i < current.size(); i++)
@@ -264,7 +259,7 @@ public final class SuggestedMediaRegistry {
 	}
 
 	public static boolean playQueueItem(long queueId) {
-		List<MediaItem> current = items;
+		List<MediaItem> current = getItems();
 		if ((queueId < 0) || (queueId >= current.size())) return false;
 		return play(current.get((int) queueId).getMediaId());
 	}
@@ -299,7 +294,7 @@ public final class SuggestedMediaRegistry {
 	}
 
 	public static boolean hasItems() {
-		return !items.isEmpty();
+		return !getItems().isEmpty();
 	}
 
 	public static boolean hasPendingPlayback() {
@@ -310,6 +305,11 @@ public final class SuggestedMediaRegistry {
 
 	public static void setPlaybackHandler(@Nullable PlaybackHandler handler) {
 		playbackHandler = handler;
+		if (handler == null) {
+			currentMediaId = null;
+			playbackQueue = Collections.emptyList();
+		}
+		notifyChanged();
 		if (handler == null) return;
 
 		String uri = FermataApplication.get().getSharedPreferences(PREFS, 0)
@@ -365,21 +365,19 @@ public final class SuggestedMediaRegistry {
 		// is ready.
 		FermataApplication.get().getSharedPreferences(PREFS, 0)
 				.edit().putString(PREF_PENDING_URI, uri).apply();
-		Log.i("Queued Android Auto YouTube selection until Fermata Web opens: ", uri);
-		requestOpenFermataWeb();
+		Log.i("Queued Android Auto YouTube selection until Fermata Web is opened: ", uri);
 		return true;
 	}
 
-	private static void requestOpenFermataWeb() {
-		try {
-			Intent i = new Intent(ACTION_OPEN_FERMATA)
-					.setComponent(new ComponentName(OPENHU_PACKAGE, OPENHU_FERMATA_RECEIVER))
-					.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
-			FermataApplication.get().sendBroadcast(i);
-			Log.i("Requested Fermata Web car app from Open Headunit");
-		} catch (Exception ex) {
-			Log.e(ex, "Failed to request Fermata Web car app");
+	public static boolean playUri(@Nullable Uri uri) {
+		if (uri == null) return false;
+		for (MediaItem item : items) {
+			if (uri.equals(item.getDescription().getMediaUri())) return play(item.getDescription().getMediaId());
 		}
+		String host = uri.getHost();
+		String id = uri.getQueryParameter("v");
+		return "m.youtube.com".equalsIgnoreCase(host) &&
+				(id != null) && YOUTUBE_ID.matcher(id).matches() && play(MEDIA_ID_PREFIX + id);
 	}
 
 	public static void setChangeListener(@Nullable Runnable listener) {
