@@ -51,7 +51,7 @@
         <!-- Keep Android Auto's media identity aligned with this Web-only build. -->
         <service
             android:name="me.aap.fermata.media.service.FermataMediaService"
-            android:exported="false"
+            android:exported="true"
             android:icon="@drawable/launcher_web"
             android:label="@string/app_name"
             tools:replace="android:exported,android:icon,android:label" />

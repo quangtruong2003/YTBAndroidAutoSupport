@@ -124,16 +124,9 @@ public class FermataMediaService extends MediaBrowserServiceCompat {
 		return lib;
 	}
 
-	/**
-	 * The custom Web+ Android Auto build exposes media through FermataMediaBridge.
-	 * Keeping this session internal prevents Gearhead from also creating a
-	 * playback-only app with an empty component name.
-	 */
+	/** Web+ exposes its own media session and recommendation queue to Android Auto. */
 	boolean usesExternalMediaBridge() {
-		// Use the runtime package name instead of BuildConfig.APPLICATION_ID here.
-		// Dynamic-feature/flavor builds can expose the base application id in
-		// BuildConfig, while the actually installed package carries .webplus.
-		return BuildConfig.AUTO && getPackageName().contains(".webplus");
+		return false;
 	}
 
 	@Override

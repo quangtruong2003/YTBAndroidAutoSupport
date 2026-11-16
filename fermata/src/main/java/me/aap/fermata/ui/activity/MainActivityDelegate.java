@@ -585,7 +585,7 @@ public class MainActivityDelegate extends ActivityDelegate
 	}
 
 	public void setBarsHidden(boolean barsHidden) {
-		App.get().getHandler().post(() -> {
+		post(() -> {
 			this.barsHidden = barsHidden;
 			int visibility = barsHidden ? GONE : VISIBLE;
 			ToolBarView tb = getToolBar();
@@ -603,7 +603,7 @@ public class MainActivityDelegate extends ActivityDelegate
 	 * the complete playback UI itself.
 	 */
 	public void setWebUiOnly(boolean webUiOnly) {
-		App.get().getHandler().post(() -> {
+		post(() -> {
 			// Re-assert the requested chrome state every time. Fullscreen/video-mode
 			// transitions can independently make bars or the floating button visible
 			// even while webUiOnly is already true.
